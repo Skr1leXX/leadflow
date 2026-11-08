@@ -55,10 +55,10 @@ async function AutomationContent() {
   const user = await requireUser();
   if (!canManageRules(user)) return <AccessDenied />;
 
-  const staff = listStaff();
+  const staff = (await listStaff());
   const active = staff.filter((s) => s.active);
-  const rules = listRules();
-  const log = listAutomationLog(50);
+  const rules = (await listRules());
+  const log = (await listAutomationLog(50));
 
   return (
     <>

@@ -48,8 +48,8 @@ async function LeadsContent({ searchParams }: { searchParams: Params }) {
     dir: first(sp.dir) === "asc" ? "asc" : "desc",
     page: Number(first(sp.page)) || 1,
   };
-  const { rows, total, page, pages } = queryLeads(query);
-  const staff = listStaff();
+  const { rows, total, page, pages } = (await queryLeads(query));
+  const staff = (await listStaff());
 
   // Everything except the page number, so pagination keeps the filters.
   const href = (p: number) => {

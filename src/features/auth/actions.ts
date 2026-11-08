@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/features/leads/db";
 import { getCredentials } from "@/features/leads/repo-workflow";
-import { createRateLimiter } from "@/features/leads/spam";
+import { rateLimit } from "@/features/leads/service";
 import { verifyPassword } from "./password";
 import { endSession, sessionConfigured, startSession } from "./session";
 
@@ -13,7 +13,6 @@ export interface LoginState {
 }
 
 // Against password guessing: 8 failed or successful tries per 10 minutes for one address from one client.
-const limiter = createRateLimiter(8, 10 * 60_000);
 // Verified when the account does not exist, so a missing user costs the same time as a wrong password.
 const DUMMY_HASH = "scrypt$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -25,10 +24,10 @@ export async function loginAction(_: LoginState, form: FormData): Promise<LoginS
   if (!email || !password) return { error: "Введите почту и пароль" };
 
   const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  const wait = limiter.hit(`${ip}|${email.toLowerCase()}`, Date.now());
+  const wait = await rateLimit(`login|${ip}|${email.toLowerCase()}`, 8, 10 * 60_000);
   if (wait > 0) return { error: `Слишком много попыток. Повторите через ${Math.ceil(wait / 60)} мин.` };
 
-  const found = getCredentials(getDb(), email);
+  const found = await getCredentials(await getDb(), email);
   const ok = verifyPassword(password, found?.passwordHash ?? DUMMY_HASH);
   if (!found || !ok || !found.staff.active) return { error: "Неверная почта или пароль" };
 

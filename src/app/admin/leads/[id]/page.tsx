@@ -34,13 +34,13 @@ async function LeadContent({ params }: { params: Params }) {
   await connection();
   const user = await requireUser();
   const { id } = await params;
-  const lead = getLead(id);
+  const lead = (await getLead(id));
   if (!lead) notFound();
 
-  const staff = listStaff();
+  const staff = (await listStaff());
   const canEdit = canEditLead(user, lead);
-  const assignee = lead.assigneeId ? getStaff(lead.assigneeId) : undefined;
-  const timeline = listTimeline(id);
+  const assignee = lead.assigneeId ? (await getStaff(lead.assigneeId)) : undefined;
+  const timeline = (await listTimeline(id));
   const hasCreatedEntry = timeline.some((e) => e.kind === "created");
 
   return (
@@ -121,7 +121,7 @@ async function LeadContent({ params }: { params: Params }) {
               <CardTitle>Битрикс24</CardTitle>
             </CardHeader>
             <CardContent>
-              <SyncPanel lead={lead} events={listEventsForLead(id)} outbox={listOutbox(id)} canEdit={canEdit} mode={getSettings().mode} />
+              <SyncPanel lead={lead} events={(await listEventsForLead(id))} outbox={(await listOutbox(id))} canEdit={canEdit} mode={(await getSettings()).mode} />
             </CardContent>
           </Card>
         </div>

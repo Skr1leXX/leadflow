@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   // The framework's "X-Powered-By" header tells visitors nothing they need.
   poweredByHeader: false,
+  // Native SQLite binding: must be required at runtime, not bundled.
+  serverExternalPackages: ["@libsql/client", "libsql"],
   async headers() {
     return [
       {

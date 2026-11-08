@@ -41,10 +41,10 @@ const STEPS = [
 export default async function IntegrationPage() {
   await connection();
   if (!canManageIntegration(await requireUser())) return <AccessDenied />;
-  const settings = getSettings();
+  const settings = (await getSettings());
   const status = getIntegrationStatus(settings.mode);
-  const leads = listLeads();
-  const events = listEvents();
+  const leads = (await listLeads());
+  const events = (await listEvents());
   const failed = leads.filter((l) => l.sync.status === "failed").length;
   const synced = leads.filter((l) => l.sync.status === "synced").length;
   const syncedDemo = leads.filter((l) => l.sync.status === "synced" && l.sync.demo).length;

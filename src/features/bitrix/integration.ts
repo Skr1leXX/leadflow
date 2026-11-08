@@ -1,7 +1,8 @@
 import "server-only";
 import { BitrixError, type BitrixClient, type IntegrationMode, type PortalInfo } from "./client";
 import { readBitrixEnv } from "./config";
-import { MockBitrixClient } from "./mock-client";
+import type { Db } from "@/features/leads/sql";
+import { dbDemoStore, MockBitrixClient } from "./mock-client";
 import { RealBitrixClient } from "./real-client";
 
 /** demo: built-in client. ready: live mode with a valid webhook. misconfigured: live requested but the webhook is missing or invalid. */
@@ -37,8 +38,9 @@ class UnconfiguredClient implements BitrixClient {
   }
 }
 
-export function resolveIntegration(mode: IntegrationMode): Integration {
-  if (mode === "demo") return { mode, state: "demo", host: null, client: new MockBitrixClient() };
+/** `db` lets the demo portal remember its state in the database; without it the simulation keeps state in memory. */
+export function resolveIntegration(mode: IntegrationMode, db?: Db): Integration {
+  if (mode === "demo") return { mode, state: "demo", host: null, client: new MockBitrixClient({ store: db ? dbDemoStore(db) : undefined }) };
 
   const env = readBitrixEnv();
   if (env.webhookUrl) {
@@ -69,9 +71,9 @@ export type ConnectionReport =
   | { ok: true; mode: IntegrationMode; info: PortalInfo }
   | { ok: false; mode: IntegrationMode; error: { code: string; message: string } };
 
-export async function checkIntegration(mode: IntegrationMode): Promise<ConnectionReport> {
+export async function checkIntegration(mode: IntegrationMode, db?: Db): Promise<ConnectionReport> {
   try {
-    return { ok: true, mode, info: await resolveIntegration(mode).client.getPortalInfo() };
+    return { ok: true, mode, info: await resolveIntegration(mode, db).client.getPortalInfo() };
   } catch (e) {
     if (e instanceof BitrixError) return { ok: false, mode, error: { code: e.code, message: e.message } };
     return { ok: false, mode, error: { code: "UNKNOWN", message: "Неизвестная ошибка при проверке подключения" } };

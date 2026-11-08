@@ -5,7 +5,7 @@ import { getDb } from "@/features/leads/db";
 export async function GET() {
   await connection();
   try {
-    getDb().prepare("SELECT 1").get();
+    await (await getDb()).get("SELECT 1 AS ok");
     return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ ok: false }, { status: 503, headers: { "Cache-Control": "no-store" } });

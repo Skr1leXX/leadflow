@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import { addDaysTo, ymd } from "@/lib/format";
 import { countLeadsInRange, leadRowsInRange } from "@/features/leads/repo";
+import type { Db } from "@/features/leads/sql";
 import { LEAD_STATUSES, type LeadStatus } from "@/features/leads/types";
 
 export const PERIODS = ["week", "month", "quarter", "custom"] as const;
@@ -108,14 +108,14 @@ export interface Dashboard extends Analytics {
 }
 
 /** Loads the period's leads from the database and computes the dashboard. `now` decides what "today" is. */
-export function buildDashboard(db: DatabaseSync, input: { period?: string; from?: string; to?: string; includeDemo: boolean }, now: Date): Dashboard {
+export async function buildDashboard(db: Db, input: { period?: string; from?: string; to?: string; includeDemo: boolean }, now: Date): Promise<Dashboard> {
   const { period, range, note } = resolveRange(input, ymd(now));
-  const rows = leadRowsInRange(db, range.from, range.to, input.includeDemo);
+  const rows = await leadRowsInRange(db, range.from, range.to, input.includeDemo);
   const analytics = computeAnalytics(rows, range);
 
   const prevTo = addDaysTo(range.from, -1);
-  const previousTotal = countLeadsInRange(db, addDaysTo(range.from, -range.days), prevTo, input.includeDemo);
-  const demoInPeriod = input.includeDemo ? analytics.demoCount : countLeadsInRange(db, range.from, range.to, true) - analytics.total;
+  const previousTotal = await countLeadsInRange(db, addDaysTo(range.from, -range.days), prevTo, input.includeDemo);
+  const demoInPeriod = input.includeDemo ? analytics.demoCount : (await countLeadsInRange(db, range.from, range.to, true)) - analytics.total;
 
   return {
     ...analytics,

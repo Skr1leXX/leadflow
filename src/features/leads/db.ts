@@ -1,6 +1,5 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { hashPassword } from "@/features/auth/password";
 import { parseMode, type IntegrationMode } from "@/features/bitrix/client";
 import { seedDemo } from "@/data/demo";
@@ -8,6 +7,9 @@ import { DEFAULT_SETTINGS } from "./defaults";
 import { migrate } from "./migrations";
 import { insertEvent, insertLead, saveSettings } from "./repo";
 import { countStaff, insertRule, insertStaff } from "./repo-workflow";
+import { createDb, type Db } from "./sql";
+
+export type { Db } from "./sql";
 
 export interface OpenOptions {
   /** Fill an empty database with demo leads, rules and (when `demoPassword` is set) demo managers. Default true. */
@@ -18,6 +20,8 @@ export interface OpenOptions {
   adminPassword?: string;
   /** Password shared by the demo managers; they are created only when this is set. */
   demoPassword?: string;
+  /** Token for a remote libSQL server. */
+  authToken?: string;
 }
 
 /** The accounts created on first start: the administrator, and demo managers when a demo password is set. */
@@ -29,43 +33,39 @@ export const DEMO_STAFF = [
 ] as const;
 const STAFF = DEMO_STAFF;
 
-function seedStaff(db: DatabaseSync, opts: OpenOptions) {
-  if (countStaff(db) > 0) return;
+async function seedStaff(db: Db, opts: OpenOptions) {
+  if ((await countStaff(db)) > 0) return;
   for (const s of STAFF) {
     const password = s.role === "admin" ? opts.adminPassword : opts.demoPassword;
-    if (password) insertStaff(db, { ...s, active: true, passwordHash: hashPassword(password) });
+    if (password) await insertStaff(db, { ...s, active: true, passwordHash: hashPassword(password) });
   }
 }
 
-/** Opens (and creates) a database and brings its schema up to date. `:memory:` gives an isolated one for tests. */
-export function openDatabase(path: string, opts: OpenOptions = {}): DatabaseSync {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-  migrate(db);
-
-  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'integration'").get()) {
-    saveSettings(db, { ...DEFAULT_SETTINGS, mode: opts.mode ?? "demo" });
+/** First-start content: settings, accounts and (optionally) the demo data. */
+async function seedFirstStart(db: Db, opts: OpenOptions) {
+  if (!(await db.get("SELECT 1 AS x FROM settings WHERE key = 'integration'"))) {
+    await saveSettings(db, { ...DEFAULT_SETTINGS, mode: opts.mode ?? "demo" });
   }
-  seedStaff(db, opts);
+  await seedStaff(db, opts);
 
-  const empty = (db.prepare("SELECT COUNT(*) AS n FROM leads").get() as { n: number }).n === 0;
-  if (empty && opts.seed !== false) {
-    const now = opts.now ?? new Date();
-    const managerIds = opts.demoPassword ? STAFF.filter((s) => s.role === "manager").map((s) => s.id) : [];
-    const demo = seedDemo(now, managerIds);
-    db.exec("BEGIN");
-    for (const l of demo.leads) insertLead(db, l);
-    for (const e of demo.events) insertEvent(db, e);
+  const empty = ((await db.get("SELECT COUNT(*) AS n FROM leads"))?.n as number) === 0;
+  if (!empty || opts.seed === false) return;
+
+  const now = opts.now ?? new Date();
+  const managerIds = opts.demoPassword ? STAFF.filter((s) => s.role === "manager").map((s) => s.id) : [];
+  const demo = seedDemo(now, managerIds);
+  await db.tx(async (t) => {
+    for (const l of demo.leads) await insertLead(t, l);
+    for (const e of demo.events) await insertEvent(t, e);
     if (managerIds.length > 0) {
-      insertRule(db, {
+      await insertRule(t, {
         id: "rule-by-service",
         name: "Интеграции — Ольге, сайты — Денису",
         enabled: true,
         createdAt: now.toISOString(),
         config: { kind: "by_service", assignments: { "crm-integration": "staff-olga", "web-development": "staff-denis" } },
       });
-      insertRule(db, {
+      await insertRule(t, {
         id: "rule-round-robin",
         name: "Остальные заявки по кругу",
         enabled: true,
@@ -73,12 +73,32 @@ export function openDatabase(path: string, opts: OpenOptions = {}): DatabaseSync
         config: { kind: "round_robin", staffIds: ["staff-olga", "staff-denis", "staff-marina"] },
       });
     }
-    db.exec("COMMIT");
+  });
+}
+
+/**
+ * Opens (and creates) a database and brings its schema up to date. `url` is `file:path`, `file::memory:` (an isolated
+ * database for tests) or a remote libSQL address. Several processes may do this at the same time on first start: the one
+ * that loses the race finds the work already done.
+ */
+export async function openDatabase(url: string, opts: OpenOptions = {}): Promise<Db> {
+  const file = url.startsWith("file:") && !url.startsWith("file::memory:") ? url.slice("file:".length) : null;
+  if (file) mkdirSync(dirname(file), { recursive: true });
+  const db = createDb(url, opts.authToken);
+  if (file) {
+    // WAL lets the app and a reader (a backup, the e2e checks) use the file at once; the timeout waits out a short lock.
+    await db.run("PRAGMA journal_mode = WAL");
+    await db.run("PRAGMA busy_timeout = 5000");
+  }
+  await migrate(db);
+  try {
+    await seedFirstStart(db, opts);
+  } catch (e) {
+    // A concurrent first start may have inserted the same rows. If the system is populated now, nothing is missing.
+    if ((await countStaff(db)) === 0 && opts.adminPassword) throw e;
   }
   return db;
 }
-
-const g = globalThis as typeof globalThis & { __leadflowDb?: DatabaseSync };
 
 export interface AccountConfig {
   adminPassword?: string;
@@ -108,11 +128,29 @@ export function accountConfig(env: Record<string, string | undefined>): AccountC
   };
 }
 
-/** Process-wide database; the path can be overridden with LEADFLOW_DB_PATH. */
-export function getDb(): DatabaseSync {
+/**
+ * Where the data lives. `LEADFLOW_DB_URL` (+ `LEADFLOW_DB_TOKEN`) points at a libSQL/Turso database, the only option on
+ * Vercel. Without it a local file is used: `LEADFLOW_DB_PATH`, or `data/leadflow.db`.
+ */
+export function dbConfig(env: Record<string, string | undefined>): { url: string; authToken?: string } {
+  const url = env.LEADFLOW_DB_URL || `file:${env.LEADFLOW_DB_PATH || "data/leadflow.db"}`;
+  if (env.VERCEL && url.startsWith("file:")) {
+    throw new Error("Vercel has no persistent disk: set LEADFLOW_DB_URL (libsql://…) and LEADFLOW_DB_TOKEN.");
+  }
+  return { url, authToken: env.LEADFLOW_DB_TOKEN || undefined };
+}
+
+const g = globalThis as typeof globalThis & { __leadflowDb?: Promise<Db> };
+
+/** Process-wide database. The promise is cached, so concurrent first requests share one start-up; a failed start is retried. */
+export function getDb(): Promise<Db> {
   if (!g.__leadflowDb) {
     const { seedDemoData, ...accounts } = accountConfig(process.env);
-    g.__leadflowDb = openDatabase(process.env.LEADFLOW_DB_PATH || "data/leadflow.db", { mode: parseMode(process.env.BITRIX24_MODE), seed: seedDemoData, ...accounts });
+    const { url, authToken } = dbConfig(process.env);
+    g.__leadflowDb = openDatabase(url, { mode: parseMode(process.env.BITRIX24_MODE), seed: seedDemoData, authToken, ...accounts });
+    g.__leadflowDb.catch(() => {
+      g.__leadflowDb = undefined;
+    });
   }
   return g.__leadflowDb;
 }

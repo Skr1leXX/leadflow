@@ -23,7 +23,7 @@ export default function NewLeadPage() {
 async function NewLeadContent() {
   await connection();
   const user = await requireUser();
-  const staff = listStaff().filter((s) => s.active && (user.role === "admin" || s.id === user.id));
+  const staff = (await listStaff()).filter((s) => s.active && (user.role === "admin" || s.id === user.id));
 
   return (
     <>

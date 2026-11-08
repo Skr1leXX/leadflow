@@ -1,11 +1,9 @@
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { redactSecrets } from "@/features/bitrix/redact";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { dayStartIso } from "@/lib/format";
 import { searchTerms, searchText } from "./search";
+import type { Arg, Db, Row } from "./sql";
 import { LEAD_STATUSES, type IntegrationSettings, type Lead, type LeadStatus, type LeadSync, type SyncEvent } from "./types";
-
-type Row = Record<string, unknown>;
 
 const bool = (v: unknown) => v === 1;
 const opt = <T>(v: unknown): T | undefined => (v === null || v === undefined ? undefined : (v as T));
@@ -53,55 +51,55 @@ function toEvent(r: Row): SyncEvent {
   };
 }
 
-export function insertLead(db: DatabaseSync, l: Lead, keys: { idempotencyKey?: string; fingerprint?: string } = {}) {
-  db.prepare(
+export async function insertLead(db: Db, l: Lead, keys: { idempotencyKey?: string; fingerprint?: string } = {}) {
+  await db.run(
     `INSERT INTO leads (id, name, phone, email, service_id, comment, status, created_at, source, idempotency_key, fingerprint,
        sync_status, sync_attempts, sync_last_attempt_at, sync_error, sync_error_code, sync_next_retry_at, sync_demo, bitrix_lead_id,
        assignee_id, search, demo_data)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    l.id, l.name, l.phone, l.email, l.serviceId, l.comment, l.status, l.createdAt, l.source,
-    keys.idempotencyKey ?? null, keys.fingerprint ?? null,
-    l.sync.status, l.sync.attempts, l.sync.lastAttemptAt ?? null, l.sync.lastError ? redactSecrets(l.sync.lastError) : null, l.sync.lastErrorCode ?? null,
-    l.sync.nextRetryAt ?? null, l.sync.demo ? 1 : 0, l.sync.bitrixId ?? null,
-    l.assigneeId ?? null, searchText(l), l.demoData ? 1 : 0,
+    [
+      l.id, l.name, l.phone, l.email, l.serviceId, l.comment, l.status, l.createdAt, l.source,
+      keys.idempotencyKey ?? null, keys.fingerprint ?? null,
+      l.sync.status, l.sync.attempts, l.sync.lastAttemptAt ?? null, l.sync.lastError ? redactSecrets(l.sync.lastError) : null, l.sync.lastErrorCode ?? null,
+      l.sync.nextRetryAt ?? null, l.sync.demo ? 1 : 0, l.sync.bitrixId ?? null,
+      l.assigneeId ?? null, searchText(l), l.demoData ? 1 : 0,
+    ],
   );
 }
 
-export function insertEvent(db: DatabaseSync, e: SyncEvent) {
-  db.prepare(
+export async function insertEvent(db: Db, e: SyncEvent) {
+  await db.run(
     `INSERT INTO sync_events (id, lead_id, lead_name, at, method, attempt, ok, bitrix_id, error_code, message, duration_ms, demo)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(e.id, e.leadId, e.leadName, e.at, e.method, e.attempt, e.ok ? 1 : 0, e.bitrixId ?? null, e.errorCode ?? null, redactSecrets(e.message), e.durationMs, e.demo ? 1 : 0);
+    [e.id, e.leadId, e.leadName, e.at, e.method, e.attempt, e.ok ? 1 : 0, e.bitrixId ?? null, e.errorCode ?? null, redactSecrets(e.message), e.durationMs, e.demo ? 1 : 0],
+  );
 }
 
-export const getLead = (db: DatabaseSync, id: string) => {
-  const r = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
+export const getLead = async (db: Db, id: string) => {
+  const r = await db.get("SELECT * FROM leads WHERE id = ?", [id]);
   return r ? toLead(r) : undefined;
 };
 
-export const listLeads = (db: DatabaseSync): Lead[] =>
-  db.prepare("SELECT * FROM leads ORDER BY created_at DESC").all().map(toLead);
+export const listLeads = async (db: Db): Promise<Lead[]> => (await db.all("SELECT * FROM leads ORDER BY created_at DESC")).map(toLead);
 
-export const listEvents = (db: DatabaseSync): SyncEvent[] =>
-  db.prepare("SELECT * FROM sync_events ORDER BY at DESC").all().map(toEvent);
+export const listEvents = async (db: Db): Promise<SyncEvent[]> => (await db.all("SELECT * FROM sync_events ORDER BY at DESC")).map(toEvent);
 
-export const listEventsForLead = (db: DatabaseSync, leadId: string): SyncEvent[] =>
-  db.prepare("SELECT * FROM sync_events WHERE lead_id = ? ORDER BY at DESC").all(leadId).map(toEvent);
+export const listEventsForLead = async (db: Db, leadId: string): Promise<SyncEvent[]> =>
+  (await db.all("SELECT * FROM sync_events WHERE lead_id = ? ORDER BY at DESC", [leadId])).map(toEvent);
 
-export const findByIdempotencyKey = (db: DatabaseSync, key: string) => {
-  const r = db.prepare("SELECT * FROM leads WHERE idempotency_key = ?").get(key);
+export const findByIdempotencyKey = async (db: Db, key: string) => {
+  const r = await db.get("SELECT * FROM leads WHERE idempotency_key = ?", [key]);
   return r ? toLead(r) : undefined;
 };
 
 /** Same submission content within the window, e.g. a double click that produced two different keys. */
-export const findRecentByFingerprint = (db: DatabaseSync, fingerprint: string, sinceIso: string) => {
-  const r = db.prepare("SELECT * FROM leads WHERE fingerprint = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1").get(fingerprint, sinceIso);
+export const findRecentByFingerprint = async (db: Db, fingerprint: string, sinceIso: string) => {
+  const r = await db.get("SELECT * FROM leads WHERE fingerprint = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1", [fingerprint, sinceIso]);
   return r ? toLead(r) : undefined;
 };
 
-export function setStatus(db: DatabaseSync, id: string, status: LeadStatus) {
-  return db.prepare("UPDATE leads SET status = ? WHERE id = ?").run(status, id).changes === 1;
+export async function setStatus(db: Db, id: string, status: LeadStatus) {
+  return (await db.run("UPDATE leads SET status = ? WHERE id = ?", [status, id])).changes === 1;
 }
 
 /**
@@ -109,63 +107,56 @@ export function setStatus(db: DatabaseSync, id: string, status: LeadStatus) {
  * parallel retries from both calling Bitrix24. A lock older than `staleBefore` is treated as a crashed attempt.
  * `resendDemo` also allows leads that were only "sent" to the demo client.
  */
-export function claimForSync(db: DatabaseSync, id: string, now: string, staleBefore: string, resendDemo = false): boolean {
-  const res = db
-    .prepare(
-      `UPDATE leads SET sync_status = 'sending', sync_locked_at = ?, sync_next_retry_at = NULL
-       WHERE id = ? AND (
-         sync_status IN ('pending', 'failed')
-         OR (sync_status = 'sending' AND (sync_locked_at IS NULL OR sync_locked_at < ?))
-         OR (? = 1 AND sync_status = 'synced' AND sync_demo = 1)
-       )`,
-    )
-    .run(now, id, staleBefore, resendDemo ? 1 : 0);
+export async function claimForSync(db: Db, id: string, now: string, staleBefore: string, resendDemo = false): Promise<boolean> {
+  const res = await db.run(
+    `UPDATE leads SET sync_status = 'sending', sync_locked_at = ?, sync_next_retry_at = NULL
+     WHERE id = ? AND (
+       sync_status IN ('pending', 'failed')
+       OR (sync_status = 'sending' AND (sync_locked_at IS NULL OR sync_locked_at < ?))
+       OR (? = 1 AND sync_status = 'synced' AND sync_demo = 1)
+     )`,
+    [now, id, staleBefore, resendDemo ? 1 : 0],
+  );
   return res.changes === 1;
 }
 
 /** Stores the outcome of an attempt and its journal entry together. */
-export function finishSync(db: DatabaseSync, id: string, sync: LeadSync, event: SyncEvent) {
-  db.exec("BEGIN");
-  try {
-    db.prepare(
+export async function finishSync(db: Db, id: string, sync: LeadSync, event: SyncEvent) {
+  await db.tx(async (t) => {
+    await t.run(
       `UPDATE leads SET sync_status = ?, sync_attempts = ?, sync_last_attempt_at = ?, sync_error = ?, sync_error_code = ?,
          sync_next_retry_at = ?, sync_locked_at = NULL, sync_demo = ?, bitrix_lead_id = ? WHERE id = ?`,
-    ).run(
-      sync.status, sync.attempts, sync.lastAttemptAt ?? null, sync.lastError ? redactSecrets(sync.lastError) : null, sync.lastErrorCode ?? null,
-      sync.nextRetryAt ?? null, sync.demo ? 1 : 0, sync.bitrixId ?? null, id,
+      [
+        sync.status, sync.attempts, sync.lastAttemptAt ?? null, sync.lastError ? redactSecrets(sync.lastError) : null, sync.lastErrorCode ?? null,
+        sync.nextRetryAt ?? null, sync.demo ? 1 : 0, sync.bitrixId ?? null, id,
+      ],
     );
-    insertEvent(db, event);
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+    await insertEvent(t, event);
+  });
 }
 
 /** Leads the background worker should (re)send: due retries, pending leads that never started, and crashed attempts. */
-export function listDueForSync(db: DatabaseSync, now: string, pendingBefore: string, staleBefore: string, limit = 10): string[] {
-  const args: SQLInputValue[] = [now, pendingBefore, staleBefore, limit];
-  return db
-    .prepare(
-      `SELECT id FROM leads WHERE
-         (sync_status = 'failed' AND sync_next_retry_at IS NOT NULL AND sync_next_retry_at <= ?)
-         OR (sync_status = 'pending' AND created_at <= ?)
-         OR (sync_status = 'sending' AND (sync_locked_at IS NULL OR sync_locked_at < ?))
-       ORDER BY created_at LIMIT ?`,
-    )
-    .all(...args)
-    .map((r) => r.id as string);
+export async function listDueForSync(db: Db, now: string, pendingBefore: string, staleBefore: string, limit = 10): Promise<string[]> {
+  const rows = await db.all(
+    `SELECT id FROM leads WHERE
+       (sync_status = 'failed' AND sync_next_retry_at IS NOT NULL AND sync_next_retry_at <= ?)
+       OR (sync_status = 'pending' AND created_at <= ?)
+       OR (sync_status = 'sending' AND (sync_locked_at IS NULL OR sync_locked_at < ?))
+     ORDER BY created_at LIMIT ?`,
+    [now, pendingBefore, staleBefore, limit],
+  );
+  return rows.map((r) => r.id as string);
 }
 
-export function getSettings(db: DatabaseSync): IntegrationSettings {
-  const r = db.prepare("SELECT value FROM settings WHERE key = 'integration'").get();
+export async function getSettings(db: Db): Promise<IntegrationSettings> {
+  const r = await db.get("SELECT value FROM settings WHERE key = 'integration'");
   const stored = JSON.parse(r?.value as string) as Partial<IntegrationSettings>;
   // Settings saved by older versions lack newer keys, so fill them from the defaults.
   return { ...DEFAULT_SETTINGS, ...stored, statusMap: { ...DEFAULT_SETTINGS.statusMap, ...stored.statusMap } };
 }
 
-export function saveSettings(db: DatabaseSync, s: IntegrationSettings) {
-  db.prepare("INSERT INTO settings (key, value) VALUES ('integration', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(s));
+export async function saveSettings(db: Db, s: IntegrationSettings) {
+  await db.run("INSERT INTO settings (key, value) VALUES ('integration', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [JSON.stringify(s)]);
 }
 
 export const LEAD_SORTS = ["created", "name", "status"] as const;
@@ -192,9 +183,9 @@ export const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const dayStart = dayStartIso;
 
 /** Filtered, sorted, paged lead list. Every value is whitelisted or bound as a parameter. */
-export function queryLeads(db: DatabaseSync, q: LeadQuery): { rows: Lead[]; total: number; page: number; pages: number } {
+export async function queryLeads(db: Db, q: LeadQuery): Promise<{ rows: Lead[]; total: number; page: number; pages: number }> {
   const where: string[] = [];
-  const args: SQLInputValue[] = [];
+  const args: Arg[] = [];
 
   for (const term of searchTerms(q.q ?? "")) {
     where.push("search LIKE ? ESCAPE '\\'");
@@ -223,7 +214,7 @@ export function queryLeads(db: DatabaseSync, q: LeadQuery): { rows: Lead[]; tota
   }
 
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM leads ${clause}`).get(...args) as { n: number }).n;
+  const total = (await db.get(`SELECT COUNT(*) AS n FROM leads ${clause}`, args))?.n as number;
 
   const sort = q.sort && (LEAD_SORTS as readonly string[]).includes(q.sort) ? q.sort : "created";
   const dir = q.dir === "asc" ? "ASC" : "DESC";
@@ -236,15 +227,12 @@ export function queryLeads(db: DatabaseSync, q: LeadQuery): { rows: Lead[]; tota
   const size = q.pageSize ?? PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(total / size));
   const page = Math.min(Math.max(1, Math.floor(q.page ?? 1) || 1), pages);
-  const rows = db
-    .prepare(`SELECT * FROM leads ${clause} ORDER BY ${order} LIMIT ? OFFSET ?`)
-    .all(...args, size, (page - 1) * size)
-    .map(toLead);
+  const rows = (await db.all(`SELECT * FROM leads ${clause} ORDER BY ${order} LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size])).map(toLead);
   return { rows, total, page, pages };
 }
 
-export function assignLead(db: DatabaseSync, id: string, staffId: string | null) {
-  return db.prepare("UPDATE leads SET assignee_id = ? WHERE id = ?").run(staffId, id).changes === 1;
+export async function assignLead(db: Db, id: string, staffId: string | null) {
+  return (await db.run("UPDATE leads SET assignee_id = ? WHERE id = ?", [staffId, id])).changes === 1;
 }
 
 // ---- sync journal ------------------------------------------------------------------------------------------------
@@ -267,9 +255,9 @@ export interface EventQuery {
 export const EVENT_PAGE_SIZE = 20;
 
 /** Filtered, paged journal, newest first. Every value is whitelisted or bound as a parameter. */
-export function queryEvents(db: DatabaseSync, q: EventQuery): { rows: SyncEvent[]; total: number; page: number; pages: number } {
+export async function queryEvents(db: Db, q: EventQuery): Promise<{ rows: SyncEvent[]; total: number; page: number; pages: number }> {
   const where: string[] = [];
-  const args: SQLInputValue[] = [];
+  const args: Arg[] = [];
   if (q.from && DAY_RE.test(q.from)) {
     where.push("at >= ?");
     args.push(dayStart(q.from));
@@ -288,42 +276,37 @@ export function queryEvents(db: DatabaseSync, q: EventQuery): { rows: SyncEvent[
     args.push(q.lead);
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM sync_events ${clause}`).get(...args) as { n: number }).n;
+  const total = (await db.get(`SELECT COUNT(*) AS n FROM sync_events ${clause}`, args))?.n as number;
   const size = q.pageSize ?? EVENT_PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(total / size));
   const page = Math.min(Math.max(1, Math.floor(q.page ?? 1) || 1), pages);
-  const rows = db
-    .prepare(`SELECT * FROM sync_events ${clause} ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`)
-    .all(...args, size, (page - 1) * size)
-    .map(toEvent);
+  const rows = (await db.all(`SELECT * FROM sync_events ${clause} ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size])).map(toEvent);
   return { rows, total, page, pages };
 }
 
-export const getEvent = (db: DatabaseSync, id: string) => {
-  const r = db.prepare("SELECT * FROM sync_events WHERE id = ?").get(id);
+export const getEvent = async (db: Db, id: string) => {
+  const r = await db.get("SELECT * FROM sync_events WHERE id = ?", [id]);
   return r ? toEvent(r) : undefined;
 };
 
 // ---- analytics queries -------------------------------------------------------------------------------------------
 
 /** Leads created on the given Moscow days (inclusive). `includeDemo` false drops the fictional seed leads. */
-export function leadRowsInRange(db: DatabaseSync, from: string, to: string, includeDemo: boolean) {
-  return db
-    .prepare(`SELECT created_at, status, source, service_id, demo_data FROM leads WHERE created_at >= ? AND created_at < ? ${includeDemo ? "" : "AND demo_data = 0"}`)
-    .all(dayStart(from), dayStart(to, 1))
-    .map((r) => ({
-      createdAt: r.created_at as string,
-      status: r.status as LeadStatus,
-      source: r.source as string,
-      serviceId: r.service_id as string,
-      demoData: r.demo_data === 1,
-    }));
+export async function leadRowsInRange(db: Db, from: string, to: string, includeDemo: boolean) {
+  const rows = await db.all(
+    `SELECT created_at, status, source, service_id, demo_data FROM leads WHERE created_at >= ? AND created_at < ? ${includeDemo ? "" : "AND demo_data = 0"}`,
+    [dayStart(from), dayStart(to, 1)],
+  );
+  return rows.map((r) => ({
+    createdAt: r.created_at as string,
+    status: r.status as LeadStatus,
+    source: r.source as string,
+    serviceId: r.service_id as string,
+    demoData: r.demo_data === 1,
+  }));
 }
 
-export function countLeadsInRange(db: DatabaseSync, from: string, to: string, includeDemo: boolean): number {
-  return (
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM leads WHERE created_at >= ? AND created_at < ? ${includeDemo ? "" : "AND demo_data = 0"}`)
-      .get(dayStart(from), dayStart(to, 1)) as { n: number }
-  ).n;
+export async function countLeadsInRange(db: Db, from: string, to: string, includeDemo: boolean): Promise<number> {
+  const r = await db.get(`SELECT COUNT(*) AS n FROM leads WHERE created_at >= ? AND created_at < ? ${includeDemo ? "" : "AND demo_data = 0"}`, [dayStart(from), dayStart(to, 1)]);
+  return r?.n as number;
 }

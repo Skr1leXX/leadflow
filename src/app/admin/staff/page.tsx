@@ -26,7 +26,7 @@ async function StaffContent() {
   await connection();
   const user = await requireUser();
   if (!canManageStaff(user)) return <AccessDenied />;
-  const staff = listStaff();
+  const staff = (await listStaff());
 
   return (
     <>

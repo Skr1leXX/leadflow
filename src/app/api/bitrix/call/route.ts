@@ -14,7 +14,7 @@ const bodySchema = z.object({
 
 /** Runs one allow-listed, read-only REST method on the real portal. Demo mode has no portal, so it answers 409. */
 export async function POST(request: Request) {
-  const { mode } = getSettings();
+  const { mode } = await getSettings();
   const denied = guardApi(request, mode);
   if (denied) return denied;
 

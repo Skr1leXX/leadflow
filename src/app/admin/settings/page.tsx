@@ -15,7 +15,7 @@ export default async function SettingsPage() {
   return (
     <>
       <PageHeader title="Настройки" description="Параметры передачи заявок в Битрикс24" />
-      <SettingsForm initial={getSettings()} />
+      <SettingsForm initial={(await getSettings())} />
     </>
   );
 }

@@ -11,7 +11,7 @@ export async function ModeBanner() {
   await connection();
   const user = await getCurrentUser();
   const admin = user ? canManageIntegration(user) : false; // only administrators can open the setup page
-  const s = getIntegrationStatus(getSettings().mode);
+  const s = getIntegrationStatus((await getSettings()).mode);
   if (s.state === "ready") return null;
 
   const demo = s.state === "demo";

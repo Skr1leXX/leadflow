@@ -34,7 +34,7 @@ const columns: Column<Client>[] = [
 export default async function ClientsPage() {
   await connection();
   await requireUser();
-  const clients = clientsFromLeads(listLeads());
+  const clients = clientsFromLeads((await listLeads()));
   return (
     <>
       <PageHeader title="Клиенты" description="Контакты, собранные из заявок. Одинаковая почта считается одним клиентом." />

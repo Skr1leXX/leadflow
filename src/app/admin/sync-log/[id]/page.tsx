@@ -31,10 +31,10 @@ async function SyncEventContent({ params }: { params: Params }) {
   await connection();
   if (!canManageIntegration(await requireUser())) return <AccessDenied />;
   const { id } = await params;
-  const event = getEvent(id);
+  const event = (await getEvent(id));
   if (!event) notFound();
-  const lead = getLead(event.leadId);
-  const related = listEventsForLead(event.leadId).filter((e) => e.id !== event.id);
+  const lead = (await getLead(event.leadId));
+  const related = (await listEventsForLead(event.leadId)).filter((e) => e.id !== event.id);
 
   const rows: [string, React.ReactNode][] = [
     ["Дата и время", dateTimeFull(event.at)],

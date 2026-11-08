@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
-import { newId, tx } from "./commands";
+import { newId } from "./commands";
 import * as repo from "./repo";
 import * as wf from "./repo-workflow";
+import type { Db } from "./sql";
 import type { AutomationRule, Lead, RuleConfig, Staff } from "./types";
 
 export interface Choice {
@@ -38,12 +38,12 @@ export interface AutomationResult {
  * The assignment, its history entry, the log entry and the Bitrix24 queue item are written in one transaction, so
  * nothing is recorded as done unless the assignment itself was saved. An already assigned lead is left alone.
  */
-export function applyAutomation(db: DatabaseSync, leadId: string, now = new Date()): AutomationResult | null {
-  const lead = repo.getLead(db, leadId);
+export async function applyAutomation(db: Db, leadId: string, now = new Date()): Promise<AutomationResult | null> {
+  const lead = await repo.getLead(db, leadId);
   if (!lead || lead.assigneeId) return null;
-  const staff = wf.listStaff(db);
+  const staff = await wf.listStaff(db);
 
-  for (const rule of wf.listRules(db)) {
+  for (const rule of await wf.listRules(db)) {
     if (!rule.enabled) continue;
     const pick = pickAssignee(rule, lead, staff);
     if (!pick) continue;
@@ -51,20 +51,20 @@ export function applyAutomation(db: DatabaseSync, leadId: string, now = new Date
     const at = now.toISOString();
 
     try {
-      const done = tx(db, () => {
+      const done = await db.tx(async (t) => {
         // Only an unassigned lead is taken: if a person assigned it meanwhile, the rule backs off.
-        const claimed = db.prepare("UPDATE leads SET assignee_id = ? WHERE id = ? AND assignee_id IS NULL").run(target.id, leadId).changes === 1;
+        const claimed = (await t.run("UPDATE leads SET assignee_id = ? WHERE id = ? AND assignee_id IS NULL", [target.id, leadId])).changes === 1;
         if (!claimed) return false;
-        wf.insertTimeline(db, { id: newId("tl"), leadId, kind: "automation", actorName: "Автоматизация", at, body: rule.name, from: "не назначен", to: target.name });
-        if (pick.nextConfig) wf.setRuleConfig(db, rule.id, pick.nextConfig);
-        wf.insertAutomationLog(db, { id: newId("al"), at, ruleId: rule.id, ruleName: rule.name, leadId, leadName: lead.name, ok: true, message: `Ответственный: ${target.name}` });
-        wf.enqueueOutbox(db, { id: newId("ob"), leadId, kind: "assignee", payload: target.id, createdAt: at });
+        await wf.insertTimeline(t, { id: newId("tl"), leadId, kind: "automation", actorName: "Автоматизация", at, body: rule.name, from: "не назначен", to: target.name });
+        if (pick.nextConfig) await wf.setRuleConfig(t, rule.id, pick.nextConfig);
+        await wf.insertAutomationLog(t, { id: newId("al"), at, ruleId: rule.id, ruleName: rule.name, leadId, leadName: lead.name, ok: true, message: `Ответственный: ${target.name}` });
+        await wf.enqueueOutbox(t, { id: newId("ob"), leadId, kind: "assignee", payload: target.id, createdAt: at });
         return true;
       });
       return done ? { ruleId: rule.id, ruleName: rule.name, staffId: target.id } : null;
     } catch (e) {
       // The transaction rolled back, so nothing above happened; keep a record of the failed attempt.
-      wf.insertAutomationLog(db, { id: newId("al"), at, ruleId: rule.id, ruleName: rule.name, leadId, leadName: lead.name, ok: false, message: `Не удалось назначить: ${e instanceof Error ? e.message : "ошибка"}` });
+      await wf.insertAutomationLog(db, { id: newId("al"), at, ruleId: rule.id, ruleName: rule.name, leadId, leadName: lead.name, ok: false, message: `Не удалось назначить: ${e instanceof Error ? e.message : "ошибка"}` });
       return null;
     }
   }

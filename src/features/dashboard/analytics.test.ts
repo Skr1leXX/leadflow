@@ -60,32 +60,32 @@ const lead = (id: string, createdAt: string, over: Partial<Lead> = {}): Lead => 
   source: "website", demoData: false, sync: { status: "synced", attempts: 1, demo: false }, ...over,
 });
 
-test("the dashboard reads the database: period bounds, previous-period change and demo filtering", () => {
-  const db = openDatabase(":memory:", { seed: false });
+test("the dashboard reads the database: period bounds, previous-period change and demo filtering", async () => {
+  const db = await openDatabase("file::memory:", { seed: false });
   // Period: the 7 days 09..15 June. Previous period: 02..08 June.
-  insertLead(db, lead("in-first-day", "2026-06-09T00:00:00+03:00", { status: "won" }));
-  insertLead(db, lead("in-last-day", "2026-06-15T23:59:59+03:00"));
-  insertLead(db, lead("before", "2026-06-08T23:59:59+03:00"));
-  insertLead(db, lead("prev-2", "2026-06-02T00:00:00+03:00"));
-  insertLead(db, lead("too-old", "2026-06-01T23:59:59+03:00"));
-  insertLead(db, lead("lead-001", "2026-06-12T10:00:00+03:00", { demoData: true, status: "rejected" }));
+  await insertLead(db, lead("in-first-day", "2026-06-09T00:00:00+03:00", { status: "won" }));
+  await insertLead(db, lead("in-last-day", "2026-06-15T23:59:59+03:00"));
+  await insertLead(db, lead("before", "2026-06-08T23:59:59+03:00"));
+  await insertLead(db, lead("prev-2", "2026-06-02T00:00:00+03:00"));
+  await insertLead(db, lead("too-old", "2026-06-01T23:59:59+03:00"));
+  await insertLead(db, lead("lead-001", "2026-06-12T10:00:00+03:00", { demoData: true, status: "rejected" }));
 
-  const withDemo = buildDashboard(db, { period: "week", includeDemo: true }, NOW);
+  const withDemo = await buildDashboard(db, { period: "week", includeDemo: true }, NOW);
   assert.equal(withDemo.total, 3, "first and last day are inside, the day before is not");
   assert.equal(withDemo.demoCount, 1);
   assert.equal(withDemo.previousTotal, 2);
   assert.equal(withDemo.delta, 50);
 
-  const real = buildDashboard(db, { period: "week", includeDemo: false }, NOW);
+  const real = await buildDashboard(db, { period: "week", includeDemo: false }, NOW);
   assert.equal(real.total, 2);
   assert.equal(real.demoInPeriod, 1, "says how many demo leads are being hidden");
   assert.equal(real.byStatus.rejected, 0);
   assert.equal(real.conversion, 50);
 
-  const custom = buildDashboard(db, { period: "custom", from: "2026-06-02", to: "2026-06-02", includeDemo: true }, NOW);
+  const custom = await buildDashboard(db, { period: "custom", from: "2026-06-02", to: "2026-06-02", includeDemo: true }, NOW);
   assert.deepEqual([custom.total, custom.series.length, custom.previousTotal], [1, 1, 1], "the previous period of a single day is the day before");
   assert.equal(custom.delta, 0);
 
-  const empty = buildDashboard(db, { period: "custom", from: "2026-05-01", to: "2026-05-01", includeDemo: true }, NOW);
+  const empty = await buildDashboard(db, { period: "custom", from: "2026-05-01", to: "2026-05-01", includeDemo: true }, NOW);
   assert.deepEqual([empty.total, empty.previousTotal, empty.delta], [0, 0, null], "no previous leads, no percentage");
 });

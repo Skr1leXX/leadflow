@@ -23,7 +23,7 @@ export async function getCurrentUser(): Promise<(Actor & { email: string }) | nu
   const key = secret();
   if (!key) return null;
   const sid = verifySession(token, key);
-  const staff = sid ? getStaff(getDb(), sid) : undefined;
+  const staff = sid ? await getStaff(await getDb(), sid) : undefined;
   return staff?.active ? { id: staff.id, name: staff.name, email: staff.email, role: staff.role } : null;
 }
 

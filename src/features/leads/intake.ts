@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import type { LeadData } from "./schema";
 import * as repo from "./repo";
+import type { Db } from "./sql";
 import type { Lead } from "./types";
 
 const DUPLICATE_WINDOW_MS = 10 * 60_000;
@@ -20,12 +20,12 @@ export interface CreateResult {
  * unavailable portal never delays or loses the submission. Repeats (same key, or same content within 10 minutes)
  * return the original lead.
  */
-export function createLead(db: DatabaseSync, data: LeadData, idempotencyKey: string, now = new Date()): CreateResult {
-  const existing = repo.findByIdempotencyKey(db, idempotencyKey);
+export async function createLead(db: Db, data: LeadData, idempotencyKey: string, now = new Date()): Promise<CreateResult> {
+  const existing = await repo.findByIdempotencyKey(db, idempotencyKey);
   if (existing) return { lead: existing, duplicate: true };
 
   const fp = fingerprint(data);
-  const recent = repo.findRecentByFingerprint(db, fp, new Date(now.getTime() - DUPLICATE_WINDOW_MS).toISOString());
+  const recent = await repo.findRecentByFingerprint(db, fp, new Date(now.getTime() - DUPLICATE_WINDOW_MS).toISOString());
   if (recent) return { lead: recent, duplicate: true };
 
   const lead: Lead = {
@@ -42,10 +42,10 @@ export function createLead(db: DatabaseSync, data: LeadData, idempotencyKey: str
     sync: { status: "pending", attempts: 0, demo: false },
   };
   try {
-    repo.insertLead(db, lead, { idempotencyKey, fingerprint: fp });
+    await repo.insertLead(db, lead, { idempotencyKey, fingerprint: fp });
   } catch (e) {
     // Two requests with the same key raced: the unique index let one in, so return that one.
-    const winner = repo.findByIdempotencyKey(db, idempotencyKey);
+    const winner = await repo.findByIdempotencyKey(db, idempotencyKey);
     if (winner) return { lead: winner, duplicate: true };
     throw e;
   }

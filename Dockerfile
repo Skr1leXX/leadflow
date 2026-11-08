@@ -1,5 +1,5 @@
 # LeadFlow container image. NOT TESTED: Docker was not available where this was written, so build it once before relying on it.
-# Node 22.13+ is required (built-in node:sqlite); the image uses Node 24.
+# Node 22.13+ is required; the image uses Node 24. The database is a libSQL file under /data.
 
 FROM node:24-slim AS build
 WORKDIR /app

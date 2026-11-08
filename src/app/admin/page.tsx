@@ -46,8 +46,8 @@ async function DashboardContent({ searchParams }: { searchParams: Params }) {
   const sp = await searchParams;
   const hideDemo = first(sp.demo) === "hide";
 
-  const d = dashboard({ period: first(sp.period), from: first(sp.from), to: first(sp.to), includeDemo: !hideDemo }, new Date());
-  const recent = queryLeads({ pageSize: 6 }).rows;
+  const d = await dashboard({ period: first(sp.period), from: first(sp.from), to: first(sp.to), includeDemo: !hideDemo }, new Date());
+  const recent = (await queryLeads({ pageSize: 6 })).rows;
   const keep = (extra: string) => `/admin?period=${d.period}${d.period === "custom" ? `&from=${d.range.from}&to=${d.range.to}` : ""}${extra}`;
   const rangeText = `${ruDate(d.range.from)} — ${ruDate(d.range.to)}`;
 

@@ -1,10 +1,10 @@
-import type { DatabaseSync } from "node:sqlite";
 import { searchText } from "./search";
+import type { Db } from "./sql";
 
 interface Migration {
   id: number;
   name: string;
-  up: (db: DatabaseSync) => void;
+  up: (db: Db) => Promise<void>;
 }
 
 const V1 = `
@@ -133,37 +133,50 @@ UPDATE leads SET demo_data = 1 WHERE id GLOB 'lead-[0-9][0-9][0-9]';
 CREATE INDEX leads_demo_created ON leads (demo_data, created_at);
 `;
 
+// Request counters for the form and the login: in the database, not in memory, because on serverless hosting each request
+// may run in a different process.
+const V4 = `
+CREATE TABLE rate_limits (
+  key TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+CREATE INDEX rate_limits_key ON rate_limits (key, at);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { id: 1, name: "leads, sync journal, settings", up: (db) => db.exec(V1) },
   {
     id: 2,
     name: "staff, timeline, outbox, automation; five lead statuses; list search",
-    up: (db) => {
-      db.exec(V2);
-      const rows = db.prepare("SELECT id, name, email, phone FROM leads").all() as { id: string; name: string; email: string; phone: string }[];
-      const set = db.prepare("UPDATE leads SET search = ? WHERE id = ?");
-      for (const r of rows) set.run(searchText(r), r.id);
+    up: async (db) => {
+      await db.exec(V2);
+      const rows = await db.all("SELECT id, name, email, phone FROM leads");
+      for (const r of rows) await db.run("UPDATE leads SET search = ? WHERE id = ?", [searchText(r as { name: string; email: string; phone: string }), r.id as string]);
     },
   },
   { id: 3, name: "demo data flag for analytics", up: (db) => db.exec(V3) },
+  { id: 4, name: "rate limit counters", up: (db) => db.exec(V4) },
 ];
 
-/** Applies pending migrations in order, each in its own transaction, and records them. Safe to run on every start. */
-export function migrate(db: DatabaseSync): number[] {
-  db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-  const done = new Set((db.prepare("SELECT id FROM schema_migrations").all() as { id: number }[]).map((r) => r.id));
+const isApplied = async (db: Db, id: number) => (await db.get("SELECT 1 AS x FROM schema_migrations WHERE id = ?", [id])) !== undefined;
+
+/**
+ * Applies pending migrations in order, each in its own transaction, and records them. Safe to run on every start and from
+ * several processes at once: if another process applied a migration first, this one sees it recorded and moves on.
+ */
+export async function migrate(db: Db): Promise<number[]> {
+  await db.run("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
   const applied: number[] = [];
   for (const m of MIGRATIONS) {
-    if (done.has(m.id)) continue;
-    db.exec("BEGIN");
+    if (await isApplied(db, m.id)) continue;
     try {
-      m.up(db);
-      db.prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(m.id, m.name, new Date().toISOString());
-      db.exec("COMMIT");
+      await db.tx(async (t) => {
+        await m.up(t);
+        await t.run("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)", [m.id, m.name, new Date().toISOString()]);
+      });
       applied.push(m.id);
     } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
+      if (!(await isApplied(db, m.id))) throw e;
     }
   }
   return applied;

@@ -32,7 +32,7 @@ function pushLater(leadId: string) {
 export async function setStatusAction(id: string, status: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return NEED_LOGIN;
-  const r = service.changeStatus(user, id, status);
+  const r = (await service.changeStatus(user, id, status));
   if (!r.ok) return { ok: false, message: r.error };
   pushLater(id);
   refresh();
@@ -42,7 +42,7 @@ export async function setStatusAction(id: string, status: string): Promise<Actio
 export async function assignAction(id: string, staffId: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return NEED_LOGIN;
-  const r = service.assignLead(user, id, staffId || null);
+  const r = (await service.assignLead(user, id, staffId || null));
   if (!r.ok) return { ok: false, message: r.error };
   pushLater(id);
   refresh();
@@ -52,7 +52,7 @@ export async function assignAction(id: string, staffId: string): Promise<ActionR
 export async function addCommentAction(id: string, text: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return NEED_LOGIN;
-  const r = service.addComment(user, id, text);
+  const r = (await service.addComment(user, id, text));
   if (!r.ok) return { ok: false, message: r.error };
   pushLater(id);
   refresh();
@@ -62,7 +62,7 @@ export async function addCommentAction(id: string, text: string): Promise<Action
 export async function retrySyncAction(id: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return NEED_LOGIN;
-  const lead = service.getLead(id);
+  const lead = (await service.getLead(id));
   if (!lead) return { ok: false, message: "Заявка не найдена" };
   if (!canEditLead(user, lead)) return { ok: false, message: "Эта заявка закреплена за другим сотрудником" };
 
@@ -108,11 +108,11 @@ export async function createManualLeadAction(_: ManualLeadState, form: FormData)
   const key = String(form.get("idempotencyKey") ?? "");
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) return { message: "Обновите страницу и повторите" };
 
-  const r = service.createManualLead(user, parsed.data, key);
+  const r = (await service.createManualLead(user, parsed.data, key));
   if (!r.ok) return { message: r.error };
 
   const { lead, duplicate } = r.value;
-  if (!duplicate && service.getSettings().autoSync) after(() => service.syncLeadNow(lead.id).catch((e) => console.error("lead sync crashed", lead.id, e instanceof Error ? e.message : e)));
+  if (!duplicate && (await service.getSettings()).autoSync) after(() => service.syncLeadNow(lead.id).catch((e) => console.error("lead sync crashed", lead.id, e instanceof Error ? e.message : e)));
   refresh();
   redirect(`/admin/leads/${lead.id}?flash=${duplicate ? "duplicate" : "created"}`);
 }
@@ -130,7 +130,7 @@ const isResult = (v: Actor | ActionResult): v is ActionResult => "ok" in v;
 export async function testConnectionAction(): Promise<ConnectionReport | ActionResult> {
   const a = await adminOnly(canManageIntegration);
   if (isResult(a)) return a;
-  return service.checkConnection();
+  return (await service.checkConnection());
 }
 
 const modeSchema = z.enum(["demo", "live"]);
@@ -150,7 +150,7 @@ export async function setModeAction(value: string): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, message: "Неизвестный режим" };
   const error = modeError(parsed.data);
   if (error) return { ok: false, message: error };
-  service.saveSettings({ mode: parsed.data });
+  (await service.saveSettings({ mode: parsed.data }));
   refresh();
   return { ok: true, message: parsed.data === "live" ? "Включён боевой режим" : "Включён демонстрационный режим" };
 }
@@ -174,7 +174,7 @@ export async function saveSettingsAction(_: SettingsState, form: FormData): Prom
   if (isResult(a)) return { result: a };
 
   const parsed = settingsSchema.safeParse({
-    mode: form.get("mode") ?? service.getSettings().mode,
+    mode: form.get("mode") ?? (await service.getSettings()).mode,
     responsibleId: form.get("responsibleId") ?? "",
     sourceId: form.get("sourceId") ?? "",
     notifyEmail: form.get("notifyEmail") ?? "",
@@ -192,7 +192,7 @@ export async function saveSettingsAction(_: SettingsState, form: FormData): Prom
   }
   const error = modeError(parsed.data.mode);
   if (error) return { errors: { mode: error }, result: { ok: false, message: "Исправьте отмеченные поля" } };
-  service.saveSettings(parsed.data);
+  (await service.saveSettings(parsed.data));
   refresh();
   return { result: { ok: true, message: "Настройки сохранены" } };
 }
@@ -200,7 +200,7 @@ export async function saveSettingsAction(_: SettingsState, form: FormData): Prom
 export async function toggleRuleAction(id: string, enabled: boolean): Promise<ActionResult> {
   const a = await adminOnly(canManageRules);
   if (isResult(a)) return a;
-  if (!service.setRuleEnabled(id, enabled)) return { ok: false, message: "Правило не найдено" };
+  if (!(await service.setRuleEnabled(id, enabled))) return { ok: false, message: "Правило не найдено" };
   refresh();
   return { ok: true, message: enabled ? "Правило включено" : "Правило выключено" };
 }
@@ -208,7 +208,7 @@ export async function toggleRuleAction(id: string, enabled: boolean): Promise<Ac
 export async function deleteRuleAction(id: string): Promise<ActionResult> {
   const a = await adminOnly(canManageRules);
   if (isResult(a)) return a;
-  if (!service.deleteRule(id)) return { ok: false, message: "Правило не найдено" };
+  if (!(await service.deleteRule(id))) return { ok: false, message: "Правило не найдено" };
   refresh();
   return { ok: true, message: "Правило удалено" };
 }
@@ -224,7 +224,7 @@ export async function createRuleAction(_: RuleFormState, form: FormData): Promis
   if (name.length < 2 || name.length > 80) return { error: "Название: от 2 до 80 символов" };
   if (!(RULE_KINDS as readonly string[]).includes(kind)) return { error: "Выберите тип правила" };
 
-  const known = new Set(wf.listStaff(getDb()).filter((s) => s.active).map((s) => s.id));
+  const known = new Set((await wf.listStaff(await getDb())).filter((s) => s.active).map((s) => s.id));
   let config: RuleConfig;
   if (kind === "by_service") {
     const assignments: Record<string, string> = {};
@@ -240,7 +240,7 @@ export async function createRuleAction(_: RuleFormState, form: FormData): Promis
     if (staffIds.length < 2) return { error: "Для распределения по кругу выберите минимум двух сотрудников" };
     config = { kind: "round_robin", staffIds };
   }
-  service.createRule(name, config);
+  (await service.createRule(name, config));
   refresh();
   return { ok: true };
 }
@@ -263,7 +263,7 @@ export async function createStaffAction(_: StaffFormState, form: FormData): Prom
 
   const d = parsed.data;
   try {
-    wf.insertStaff(getDb(), { id: `staff-${Math.random().toString(36).slice(2, 10)}`, name: d.name, email: d.email, role: d.role, active: true, bitrixUserId: d.bitrixUserId, passwordHash: hashPassword(d.password) });
+    await wf.insertStaff(await getDb(), { id: `staff-${Math.random().toString(36).slice(2, 10)}`, name: d.name, email: d.email, role: d.role, active: true, bitrixUserId: d.bitrixUserId, passwordHash: hashPassword(d.password) });
   } catch {
     return { error: "Сотрудник с такой почтой уже есть" };
   }
@@ -275,7 +275,7 @@ export async function setStaffActiveAction(id: string, active: boolean): Promise
   const a = await adminOnly(canManageStaff);
   if (isResult(a)) return a;
   if (!active && id === a.id) return { ok: false, message: "Нельзя отключить самого себя" };
-  if (!service.setStaffActive(id, active)) return { ok: false, message: "Сотрудник не найден" };
+  if (!(await service.setStaffActive(id, active))) return { ok: false, message: "Сотрудник не найден" };
   refresh();
   return { ok: true, message: active ? "Сотрудник включён" : "Сотрудник отключён: войти он больше не сможет" };
 }
@@ -286,7 +286,7 @@ export async function setStaffBitrixUserAction(id: string, value: string): Promi
   const trimmed = value.trim();
   const n = trimmed === "" ? null : Number(trimmed);
   if (n !== null && (!Number.isInteger(n) || n <= 0)) return { ok: false, message: "ID должен быть положительным числом" };
-  if (!service.setStaffBitrixUser(id, n)) return { ok: false, message: "Сотрудник не найден" };
+  if (!(await service.setStaffBitrixUser(id, n))) return { ok: false, message: "Сотрудник не найден" };
   refresh();
   return { ok: true, message: "ID в Битрикс24 сохранён" };
 }

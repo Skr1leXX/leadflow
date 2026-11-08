@@ -89,7 +89,7 @@ async function SyncLogContent({ searchParams }: { searchParams: Params }) {
     lead: first(sp.lead).trim().slice(0, 60),
     page: Number(first(sp.page)) || 1,
   };
-  const { rows, total, page, pages } = queryEvents(query);
+  const { rows, total, page, pages } = (await queryEvents(query));
   const filtered = Boolean(query.from || query.to || query.status || query.type || query.lead);
 
   const href = (p: number) => {
