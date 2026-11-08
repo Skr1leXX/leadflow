@@ -46,7 +46,7 @@ export function SidebarNav({ role, onNavigate }: { role: Role; onNavigate?: () =
         >
           <ExternalLink className="size-4" /> Публичный сайт
         </Link>
-        <p className="px-3 pt-1 text-xs text-muted-foreground">Данные хранятся в локальной базе SQLite</p>
+        <p className="px-3 pt-1 text-xs text-muted-foreground">Данные хранятся в вашей базе данных</p>
       </div>
     </div>
   );

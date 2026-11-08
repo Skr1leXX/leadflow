@@ -1,5 +1,5 @@
 import { redactSecrets } from "@/features/bitrix/redact";
-import type { Db, Row } from "./sql";
+import { seq, type Db, type Row } from "./sql";
 import type {
   AutomationLogEntry,
   AutomationRule,
@@ -42,7 +42,7 @@ export const countStaff = async (db: Db) => (await db.get("SELECT COUNT(*) AS n 
 
 /** Login lookup: the only place the password hash leaves the table. */
 export async function getCredentials(db: Db, email: string): Promise<{ staff: Staff; passwordHash: string } | undefined> {
-  const r = await db.get("SELECT * FROM staff WHERE email = ?", [email.trim()]);
+  const r = await db.get("SELECT * FROM staff WHERE lower(email) = lower(?)", [email.trim()]);
   return r ? { staff: toStaff(r), passwordHash: r.password_hash as string } : undefined;
 }
 
@@ -72,7 +72,7 @@ export async function insertTimeline(db: Db, e: TimelineEntry) {
 }
 
 export const listTimeline = async (db: Db, leadId: string): Promise<TimelineEntry[]> =>
-  (await db.all("SELECT * FROM lead_timeline WHERE lead_id = ? ORDER BY at DESC, rowid DESC", [leadId])).map(toEntry);
+  (await db.all(`SELECT * FROM lead_timeline WHERE lead_id = ? ORDER BY at DESC, ${seq(db)} DESC`, [leadId])).map(toEntry);
 
 // ---- outbox ------------------------------------------------------------------------------------------------------
 
@@ -98,7 +98,7 @@ export async function enqueueOutbox(db: Db, item: { id: string; leadId: string; 
 }
 
 export const listOutbox = async (db: Db, leadId: string): Promise<OutboxItem[]> =>
-  (await db.all("SELECT * FROM outbox WHERE lead_id = ? ORDER BY created_at DESC, rowid DESC", [leadId])).map(toOutbox);
+  (await db.all(`SELECT * FROM outbox WHERE lead_id = ? ORDER BY created_at DESC, ${seq(db)} DESC`, [leadId])).map(toOutbox);
 
 export const getOutbox = async (db: Db, id: string): Promise<OutboxItem | undefined> => {
   const r = await db.get("SELECT * FROM outbox WHERE id = ?", [id]);
@@ -138,12 +138,12 @@ export async function listDueOutbox(db: Db, now: string, staleBefore: string, li
   const rows = await db.all(
     `SELECT o.id FROM outbox o JOIN leads l ON l.id = o.lead_id
      WHERE l.sync_status = 'synced' AND l.bitrix_lead_id IS NOT NULL
-       AND (? IS NULL OR o.lead_id = ?)
+       ${leadId ? "AND o.lead_id = ?" : ""}
        AND (o.status = 'pending'
          OR (o.status = 'failed' AND o.next_retry_at IS NOT NULL AND o.next_retry_at <= ?)
          OR (o.status = 'sending' AND (o.locked_at IS NULL OR o.locked_at < ?)))
-     ORDER BY o.created_at, o.rowid LIMIT ?`,
-    [leadId ?? null, leadId ?? null, now, staleBefore, limit],
+     ORDER BY o.created_at, o.${seq(db)} LIMIT ?`,
+    [...(leadId ? [leadId] : []), now, staleBefore, limit],
   );
   return rows.map((r) => r.id as string);
 }
@@ -186,7 +186,7 @@ export async function insertAutomationLog(db: Db, e: AutomationLogEntry) {
 }
 
 export const listAutomationLog = async (db: Db, limit = 50): Promise<AutomationLogEntry[]> =>
-  (await db.all("SELECT * FROM automation_log ORDER BY at DESC, rowid DESC LIMIT ?", [limit])).map((r) => ({
+  (await db.all(`SELECT * FROM automation_log ORDER BY at DESC, ${seq(db)} DESC LIMIT ?`, [limit])).map((r) => ({
     id: r.id as string,
     at: r.at as string,
     ruleId: r.rule_id as string,

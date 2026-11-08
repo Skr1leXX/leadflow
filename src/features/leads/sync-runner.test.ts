@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BitrixError, type BitrixClient, type BitrixLeadFields } from "@/features/bitrix/client";
 import { MockBitrixClient } from "@/features/bitrix/mock-client";
-import { openDatabase } from "./db";
+import { testDatabase } from "./test-db";
 import { createLead } from "./intake";
 import { getLead, listEventsForLead } from "./repo";
 import { parseLeadInput } from "./schema";
@@ -13,7 +13,7 @@ import type { IntegrationSettings } from "./types";
 
 const settings: IntegrationSettings = { mode: "demo", autoSync: true, responsibleId: 1, sourceId: "WEB", notifyEmail: "", statusMap: DEFAULT_STATUS_MAP };
 const mock = () => new MockBitrixClient({ latencyMs: 0 });
-const fresh = () => openDatabase("file::memory:", { seed: false });
+const fresh = () => testDatabase({ seed: false });
 
 let n = 0;
 async function submit(db: Db, email = "a@example.com", comment = "") {

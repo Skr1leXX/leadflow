@@ -29,7 +29,7 @@
 | Часть | Статус |
 |---|---|
 | Форма на сайте, проверка данных, защита от спама и дублей | **Работает по-настоящему**, покрыто тестами |
-| Хранение заявок, комментариев, истории, журнала (libSQL: файл SQLite или удалённая Turso) | **Работает по-настоящему** (файл проверен тестами; удалённая Turso не проверялась) |
+| Хранение заявок, комментариев, истории, журнала (SQLite-файл, Turso или Postgres/Supabase) | **Работает по-настоящему** (SQLite-файл и Postgres проверены тестами; сами облачные Turso и Supabase не проверялись) |
 | Вход, роли «администратор» и «менеджер», права на заявки | **Работает по-настоящему** |
 | Правила автоматического назначения ответственного | **Работает по-настоящему** |
 | Очередь отправки и повторы при сбоях | **Работает по-настоящему** (логика проверена тестами на имитации портала) |
@@ -67,9 +67,9 @@
 
 ## Технологии
 
-Next.js 16 (App Router, Cache Components) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · Recharts · Zod · libSQL (`@libsql/client`: файл SQLite локально, Turso на Vercel) · Playwright · tsx (unit-тесты на `node:test`).
+Next.js 16 (App Router, Cache Components) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · Recharts · Zod · SQLite/libSQL (`@libsql/client`) или Postgres (`pg`, Supabase) · Playwright · tsx (unit-тесты на `node:test`).
 
-Локально внешних сервисов не нужно: один Node.js-процесс с файлом базы. Для Vercel нужна удалённая база libSQL (Turso), см. раздел «Vercel».
+Локально внешних сервисов не нужно: один Node.js-процесс с файлом базы. Для Vercel нужна удалённая база: Supabase (Postgres) или Turso, см. раздел «Vercel».
 
 ## Архитектура
 
@@ -165,7 +165,7 @@ npm run demo:reset    # вернуть демо-данные к исходным
 
 ## База данных
 
-Используется **libSQL** (`@libsql/client`): локально это файл SQLite, на Vercel — удалённая база Turso (`LEADFLOW_DB_URL`, `LEADFLOW_DB_TOKEN`). Supabase не используется.
+Поддерживаются три варианта, выбор по `LEADFLOW_DB_URL`: пусто — локальный файл SQLite; `postgres://…` — Postgres (Supabase); `libsql://…` — Turso (+ `LEADFLOW_DB_TOKEN`). Запросы написаны один раз в общем подмножестве SQL, различия (порядок вставки, регистр e-mail, схема) обрабатываются в `sql.ts` и `migrations.ts`. Схема создаётся автоматически и там, и там.
 
 - **Расположение:** `LEADFLOW_DB_PATH` (по умолчанию `data/leadflow.db`). Папка `data/` исключена из Git.
 - **Создание и миграции:** автоматически при первом обращении к базе. Миграции лежат в `src/features/leads/migrations.ts`, применяются по порядку, каждая в своей транзакции, и записываются в таблицу `schema_migrations`. Повторный запуск безопасен, существующую базу прошлой версии они обновляют, не теряя данных.
@@ -176,6 +176,7 @@ npm run demo:reset    # вернуть демо-данные к исходным
 | 2 | сотрудники, история заявки, очередь отправки, правила и журнал автоматизации; пять статусов; индекс поиска |
 | 3 | признак демо-данных для аналитики |
 | 4 | ограничение частоты запросов в базе (`rate_limits`) |
+| 5 | только Postgres: включает row level security на всех таблицах (в SQLite ничего не делает) |
 
 - **Таблицы:** `leads`, `sync_events` (журнал), `settings`, `staff`, `lead_timeline` (история и комментарии), `outbox` (очередь изменений для Битрикс24), `automation_rules`, `automation_log`, `schema_migrations`.
 - **Демо-данные:** 40 вымышленных заявок за последний месяц, журнал к ним и, при заданном пароле демо-менеджеров, три сотрудника и два правила. Вся демо-запись помечена и **не создаётся при обычном запуске в production** (только при `LEADFLOW_DEMO=true`).
@@ -261,14 +262,20 @@ LEADFLOW_SESSION_SECRET=... LEADFLOW_ADMIN_PASSWORD=... LEADFLOW_DB_PATH=/var/li
 
 ### Vercel
 
-Подготовлено, но **на живом Vercel не запускалось**: проверены только сборка с `VERCEL=1`, юнит-тесты и Playwright на файловой libSQL-базе. Работа с удалённой Turso по HTTP, развёртывание и cron не проверены.
+Подготовлено, но **на живом Vercel не запускалось**. Проверено: сборка с `VERCEL=1`; юнит-тесты на SQLite и на настоящем движке Postgres (PGlite, `npm run test:pg`); Playwright на файловой SQLite. **Не проверено:** подключение драйвера `pg` к реальному Supabase (TLS, пулер), Turso по сети, расписание cron, реальный портал Битрикс24.
 
-Что изменено ради serverless: слой данных асинхронный (`@libsql/client`), лимиты частоты и состояние демо-портала лежат в базе, фонового воркера на Vercel нет (повторы запускает Vercel Cron через `GET /api/sync/run`), файловая база на Vercel отвергается при старте.
+Что сделано ради serverless: слой данных асинхронный, лимиты частоты и состояние демо-портала лежат в базе, фонового воркера на Vercel нет (повторы запускает Vercel Cron через `GET /api/sync/run`), файловая база на Vercel отвергается при старте.
 
-1. Создайте базу: `turso db create leadflow`, затем `turso db show leadflow --url` и `turso db tokens create leadflow`.
-2. Импортируйте репозиторий в Vercel и задайте переменные: `LEADFLOW_DB_URL` (`libsql://...`), `LEADFLOW_DB_TOKEN`, `LEADFLOW_SESSION_SECRET` (16+ символов), `LEADFLOW_ADMIN_PASSWORD`, `CRON_SECRET` (длинная случайная строка). Для боя ещё `BITRIX24_MODE=live`, `BITRIX24_WEBHOOK_URL`, `LEADFLOW_API_TOKEN`. Для публичного демо: `LEADFLOW_DEMO=true` и `LEADFLOW_DEMO_PASSWORD`.
-3. Схема и первый администратор создаются при первом обращении к базе.
-4. `vercel.json` запускает повторы раз в сутки (`0 6 * * *`): на тарифе Hobby чаще нельзя. На Pro поставьте `* * * * *`. Новые заявки при включённой автосинхронизации отправляются сразу после ответа формы, cron нужен только для повторов.
+**С Supabase:**
+1. Создайте проект. В Project Settings → Database возьмите строку подключения **Transaction pooler** (порт 6543) и CA-сертификат (SSL).
+2. В Vercel задайте: `LEADFLOW_DB_URL` (эта строка с вашим паролем), `LEADFLOW_DB_CA` (PEM, переводы строк как `\n`), `LEADFLOW_SESSION_SECRET` (16+ символов), `LEADFLOW_ADMIN_PASSWORD`, `CRON_SECRET`. Соединение всегда идёт по TLS с проверкой сертификата; без `LEADFLOW_DB_CA` сработают только сертификаты, известные Node.js.
+3. Таблицы и первый администратор создаются при первом обращении. Миграция 5 включает RLS на всех таблицах: публичный REST API Supabase с anon-ключом ничего из них не увидит, а приложение подключается как владелец таблиц, на которого RLS не действует. Не заводите к этим таблицам политики для `anon`.
+
+**С Turso:** `turso db create leadflow`, затем `turso db show leadflow --url` и `turso db tokens create leadflow` → `LEADFLOW_DB_URL` и `LEADFLOW_DB_TOKEN`.
+
+Для боя добавьте `BITRIX24_MODE=live`, `BITRIX24_WEBHOOK_URL`, `LEADFLOW_API_TOKEN`; для публичного демо `LEADFLOW_DEMO=true` и `LEADFLOW_DEMO_PASSWORD`.
+
+`vercel.json` запускает повторы раз в сутки (`0 6 * * *`): на тарифе Hobby чаще нельзя. На Pro поставьте `* * * * *`. Новые заявки при включённой автосинхронизации отправляются сразу после ответа формы, cron нужен только для повторов.
 
 ## Безопасность
 

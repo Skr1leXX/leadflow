@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { openDatabase } from "./db";
+import { testDatabase } from "./test-db";
 import { finishSync, getEvent, insertEvent, insertLead, getLead, queryEvents, type EventQuery } from "./repo";
 import { enqueueOutbox, finishOutbox, listOutbox } from "./repo-workflow";
 import type { Lead, SyncEvent } from "./types";
@@ -10,7 +10,7 @@ const ev = (id: string, at: string, over: Partial<SyncEvent> = {}): SyncEvent =>
 });
 
 const seed = async () => {
-  const db = await openDatabase("file::memory:", { seed: false });
+  const db = await testDatabase({ seed: false });
   await insertEvent(db, ev("e1", "2026-06-10T10:00:00+03:00", { bitrixId: 11 }));
   await insertEvent(db, ev("e2", "2026-06-11T10:00:00+03:00", { ok: false, errorCode: "TIMEOUT", message: "нет ответа", method: "crm.lead.update" }));
   await insertEvent(db, ev("e3", "2026-06-12T23:59:00+03:00", { method: "crm.timeline.comment.add", leadId: "lead-b" }));
@@ -50,7 +50,7 @@ test("an entry keeps everything the journal must show", async () => {
 });
 
 test("secrets never reach the journal, the lead's error field or the outbox", async () => {
-  const db = await openDatabase("file::memory:", { seed: false });
+  const db = await testDatabase({ seed: false });
   const leaky = "request to https://p.bitrix24.ru/rest/5/AbCdEf123456/crm.lead.add.json failed, token=sup3rs3cr3t, Authorization: Bearer abcdef123456";
   const clean = (s: string | undefined) => {
     assert.ok(s);

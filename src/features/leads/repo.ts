@@ -2,7 +2,7 @@ import { redactSecrets } from "@/features/bitrix/redact";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { dayStartIso } from "@/lib/format";
 import { searchTerms, searchText } from "./search";
-import type { Arg, Db, Row } from "./sql";
+import { seq, type Arg, type Db, type Row } from "./sql";
 import { LEAD_STATUSES, type IntegrationSettings, type Lead, type LeadStatus, type LeadSync, type SyncEvent } from "./types";
 
 const bool = (v: unknown) => v === 1;
@@ -220,7 +220,7 @@ export async function queryLeads(db: Db, q: LeadQuery): Promise<{ rows: Lead[]; 
   const dir = q.dir === "asc" ? "ASC" : "DESC";
   const order = {
     created: `created_at ${dir}`,
-    name: `name COLLATE NOCASE ${dir}, created_at DESC`,
+    name: `lower(name) ${dir}, created_at DESC`,
     status: `CASE status ${LEAD_STATUSES.map((s, i) => `WHEN '${s}' THEN ${i}`).join(" ")} END ${dir}, created_at DESC`,
   }[sort];
 
@@ -280,7 +280,7 @@ export async function queryEvents(db: Db, q: EventQuery): Promise<{ rows: SyncEv
   const size = q.pageSize ?? EVENT_PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(total / size));
   const page = Math.min(Math.max(1, Math.floor(q.page ?? 1) || 1), pages);
-  const rows = (await db.all(`SELECT * FROM sync_events ${clause} ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size])).map(toEvent);
+  const rows = (await db.all(`SELECT * FROM sync_events ${clause} ORDER BY at DESC, ${seq(db)} DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size])).map(toEvent);
   return { rows, total, page, pages };
 }
 

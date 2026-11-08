@@ -7,7 +7,10 @@ interface Migration {
   up: (db: Db) => Promise<void>;
 }
 
-const V1 = `
+/** Postgres has no implicit rowid, so tables that need insertion order get an identity column (see `seq` in sql.ts). */
+const SEQ = (pg: boolean) => (pg ? ", seq BIGINT GENERATED ALWAYS AS IDENTITY" : "");
+
+const V1 = (pg: boolean) => `
 CREATE TABLE IF NOT EXISTS leads (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -46,14 +49,14 @@ CREATE TABLE IF NOT EXISTS sync_events (
   error_code TEXT,
   message TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
-  demo INTEGER NOT NULL DEFAULT 0
+  demo INTEGER NOT NULL DEFAULT 0${SEQ(pg)}
 );
 CREATE INDEX IF NOT EXISTS events_lead ON sync_events (lead_id, at);
 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
-const V2 = `
+const V2 = (pg: boolean) => `
 ALTER TABLE leads ADD COLUMN assignee_id TEXT;
 ALTER TABLE leads ADD COLUMN search TEXT NOT NULL DEFAULT '';
 -- "processed" became "won" ("successfully completed") when the status list grew to five.
@@ -64,13 +67,14 @@ CREATE INDEX leads_status ON leads (status);
 CREATE TABLE staff (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  email TEXT NOT NULL${pg ? "" : " UNIQUE COLLATE NOCASE"},
   role TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   bitrix_user_id INTEGER,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
+${pg ? "CREATE UNIQUE INDEX staff_email ON staff (lower(email));" : ""}
 
 CREATE TABLE lead_timeline (
   id TEXT PRIMARY KEY,
@@ -81,7 +85,7 @@ CREATE TABLE lead_timeline (
   at TEXT NOT NULL,
   body TEXT,
   from_value TEXT,
-  to_value TEXT
+  to_value TEXT${SEQ(pg)}
 );
 CREATE INDEX timeline_lead ON lead_timeline (lead_id, at);
 
@@ -99,7 +103,7 @@ CREATE TABLE outbox (
   locked_at TEXT,
   created_at TEXT NOT NULL,
   done_at TEXT,
-  demo INTEGER NOT NULL DEFAULT 0
+  demo INTEGER NOT NULL DEFAULT 0${SEQ(pg)}
 );
 CREATE INDEX outbox_lead ON outbox (lead_id, created_at);
 CREATE INDEX outbox_due ON outbox (status, next_retry_at);
@@ -121,41 +125,53 @@ CREATE TABLE automation_log (
   lead_id TEXT NOT NULL,
   lead_name TEXT NOT NULL,
   ok INTEGER NOT NULL,
-  message TEXT NOT NULL
+  message TEXT NOT NULL${SEQ(pg)}
 );
 CREATE INDEX automation_log_at ON automation_log (at);
 `;
 
-const V3 = `
+const V3 = (pg: boolean) => `
 ALTER TABLE leads ADD COLUMN demo_data INTEGER NOT NULL DEFAULT 0;
 -- Leads written by the demo seed have ids like lead-001; real ones get random hex ids.
-UPDATE leads SET demo_data = 1 WHERE id GLOB 'lead-[0-9][0-9][0-9]';
+UPDATE leads SET demo_data = 1 WHERE id ${pg ? "~ '^lead-[0-9]{3}$'" : "GLOB 'lead-[0-9][0-9][0-9]'"};
 CREATE INDEX leads_demo_created ON leads (demo_data, created_at);
 `;
 
 // Request counters for the form and the login: in the database, not in memory, because on serverless hosting each request
 // may run in a different process.
-const V4 = `
+const V4 = () => `
 CREATE TABLE rate_limits (
   key TEXT NOT NULL,
-  at INTEGER NOT NULL
+  at BIGINT NOT NULL
 );
 CREATE INDEX rate_limits_key ON rate_limits (key, at);
 `;
 
 export const MIGRATIONS: Migration[] = [
-  { id: 1, name: "leads, sync journal, settings", up: (db) => db.exec(V1) },
+  { id: 1, name: "leads, sync journal, settings", up: (db) => db.exec(V1(db.dialect === "postgres")) },
   {
     id: 2,
     name: "staff, timeline, outbox, automation; five lead statuses; list search",
     up: async (db) => {
-      await db.exec(V2);
+      await db.exec(V2(db.dialect === "postgres"));
       const rows = await db.all("SELECT id, name, email, phone FROM leads");
       for (const r of rows) await db.run("UPDATE leads SET search = ? WHERE id = ?", [searchText(r as { name: string; email: string; phone: string }), r.id as string]);
     },
   },
-  { id: 3, name: "demo data flag for analytics", up: (db) => db.exec(V3) },
-  { id: 4, name: "rate limit counters", up: (db) => db.exec(V4) },
+  { id: 3, name: "demo data flag for analytics", up: (db) => db.exec(V3(db.dialect === "postgres")) },
+  { id: 4, name: "rate limit counters", up: (db) => db.exec(V4()) },
+  {
+    id: 5,
+    name: "Postgres: row level security",
+    // Supabase publishes the public schema through its REST API and an anon key. With RLS on and no policies that key sees
+    // nothing; the app connects as the table owner, which RLS does not apply to.
+    up: async (db) => {
+      if (db.dialect !== "postgres") return;
+      for (const t of ["leads", "sync_events", "settings", "staff", "lead_timeline", "outbox", "automation_rules", "automation_log", "rate_limits", "schema_migrations"]) {
+        await db.exec(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+      }
+    },
+  },
 ];
 
 const isApplied = async (db: Db, id: number) => (await db.get("SELECT 1 AS x FROM schema_migrations WHERE id = ?", [id])) !== undefined;

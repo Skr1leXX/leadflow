@@ -7,21 +7,22 @@ import { BitrixError, type BitrixClient } from "@/features/bitrix/client";
 import { applyAutomation, pickAssignee } from "./automation";
 import { addComment, assignLead, changeStatus, createManualLead } from "./commands";
 import { DEFAULT_STATUS_MAP } from "./defaults";
-import { accountConfig, openDatabase } from "./db";
+import { accountConfig } from "./db";
+import { rawTestDb, testDatabase } from "./test-db";
 import { createLead } from "./intake";
 import { MIGRATIONS, migrate } from "./migrations";
 import { processOutbox, sendOutboxItem } from "./outbox";
 import * as repo from "./repo";
 import * as wf from "./repo-workflow";
 import { parseLeadInput, manualLeadSchema } from "./schema";
-import { createDb, type Db } from "./sql";
+import type { Db } from "./sql";
 import { runLeadSync } from "./sync-runner";
 import type { AutomationRule, IntegrationSettings } from "./types";
 
 const settings: IntegrationSettings = { mode: "demo", autoSync: true, responsibleId: 1, sourceId: "WEB", notifyEmail: "", statusMap: DEFAULT_STATUS_MAP };
 const T0 = new Date("2026-06-15T12:00:00Z");
 
-const testDb = () => openDatabase("file::memory:", { seed: false, adminPassword: "admin-pass", demoPassword: "demo-pass" });
+const testDb = () => testDatabase({ seed: false, adminPassword: "admin-pass", demoPassword: "demo-pass" });
 const admin: Actor = { id: "staff-admin", name: "Администратор", role: "admin" };
 const olga: Actor = { id: "staff-olga", name: "Ольга Смирнова", role: "manager" };
 const denis: Actor = { id: "staff-denis", name: "Денис Климов", role: "manager" };
@@ -83,11 +84,11 @@ test("permission matrix", () => {
 // ---- migrations --------------------------------------------------------------------------------------------------
 
 test("migrating an existing v1 database keeps its leads and renames the old status", async () => {
-  const db = createDb("file::memory:");
+  const db = await rawTestDb();
   await MIGRATIONS[0].up(db); // the schema as shipped before this stage
   await db.exec("INSERT INTO leads (id,name,phone,email,service_id,comment,status,created_at,source,sync_status) VALUES ('l1','Анна','+79001112233','a@x.ru','automation','','processed','2026-01-01T00:00:00Z','website','synced')");
   const applied = await migrate(db);
-  assert.deepEqual(applied, [1, 2, 3, 4], "migration 1 is idempotent on an existing schema");
+  assert.deepEqual(applied, [1, 2, 3, 4, 5], "migration 1 is idempotent on an existing schema");
   const row = await db.get("SELECT status, search, assignee_id, demo_data FROM leads WHERE id = 'l1'");
   assert.equal(row?.status, "won");
   assert.match(row?.search as string, /анна/);
@@ -361,7 +362,7 @@ test("changes are never sent across demo and live: a demo lead ID means nothing 
 });
 
 test("the demo seed gives a working database with staff, rules and assigned leads", async () => {
-  const db = await openDatabase("file::memory:", { adminPassword: "a", demoPassword: "d", now: T0 });
+  const db = await testDatabase({ adminPassword: "a", demoPassword: "d", now: T0 });
   assert.equal((await wf.listStaff(db)).length, 4);
   assert.equal((await wf.listRules(db)).length, 2);
   const q = await repo.queryLeads(db, { pageSize: 100 });
@@ -372,7 +373,7 @@ test("the demo seed gives a working database with staff, rules and assigned lead
 });
 
 test("without an admin password no account exists, so nobody can sign in", async () => {
-  const db = await openDatabase("file::memory:", { seed: false });
+  const db = await testDatabase({ seed: false });
   assert.equal(await wf.countStaff(db), 0);
 });
 

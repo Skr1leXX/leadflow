@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { openDatabase } from "@/features/leads/db";
+import { testDatabase } from "@/features/leads/test-db";
 import { insertLead } from "@/features/leads/repo";
 import type { Lead } from "@/features/leads/types";
 import { buildDashboard, computeAnalytics, resolveRange } from "./analytics";
@@ -61,7 +61,7 @@ const lead = (id: string, createdAt: string, over: Partial<Lead> = {}): Lead => 
 });
 
 test("the dashboard reads the database: period bounds, previous-period change and demo filtering", async () => {
-  const db = await openDatabase("file::memory:", { seed: false });
+  const db = await testDatabase({ seed: false });
   // Period: the 7 days 09..15 June. Previous period: 02..08 June.
   await insertLead(db, lead("in-first-day", "2026-06-09T00:00:00+03:00", { status: "won" }));
   await insertLead(db, lead("in-last-day", "2026-06-15T23:59:59+03:00"));

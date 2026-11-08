@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { openDatabase } from "./db";
+import { testDatabase } from "./test-db";
 import { createLead } from "./intake";
 import { listLeads } from "./repo";
 import { parseLeadInput } from "./schema";
@@ -12,7 +12,7 @@ const data = (over: Record<string, string> = {}) => {
   return r.data;
 };
 
-const emptyDb = () => openDatabase("file::memory:", { seed: false });
+const emptyDb = () => testDatabase({ seed: false });
 
 test("the same submission key stores one lead", async () => {
   const db = await emptyDb();

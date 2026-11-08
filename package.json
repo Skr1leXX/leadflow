@@ -15,7 +15,8 @@
     "demo": "node scripts/demo.mjs",
     "demo:reset": "node scripts/demo-reset.mjs",
     "verify": "npm run lint && npm run typecheck && npm test && npm run e2e",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "test:pg": "node -e \"process.env.LEADFLOW_TEST_DB='postgres';require('child_process').execSync('npm test',{stdio:'inherit'})\""
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -24,6 +25,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.69.0",
     "next": "16.4.5",
+    "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
@@ -33,9 +35,11 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@playwright/test": "^1.65.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

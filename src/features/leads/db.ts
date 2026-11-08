@@ -22,6 +22,8 @@ export interface OpenOptions {
   demoPassword?: string;
   /** Token for a remote libSQL server. */
   authToken?: string;
+  /** An already connected database (tests use this to run the same suite on Postgres); `url` is then ignored. */
+  db?: Db;
 }
 
 /** The accounts created on first start: the administrator, and demo managers when a demo password is set. */
@@ -78,14 +80,14 @@ async function seedFirstStart(db: Db, opts: OpenOptions) {
 
 /**
  * Opens (and creates) a database and brings its schema up to date. `url` is `file:path`, `file::memory:` (an isolated
- * database for tests) or a remote libSQL address. Several processes may do this at the same time on first start: the one
+ * database for tests) a remote libSQL address or `postgres://…`. Several processes may do this at the same time on first start: the one
  * that loses the race finds the work already done.
  */
 export async function openDatabase(url: string, opts: OpenOptions = {}): Promise<Db> {
   const file = url.startsWith("file:") && !url.startsWith("file::memory:") ? url.slice("file:".length) : null;
   if (file) mkdirSync(dirname(file), { recursive: true });
-  const db = createDb(url, opts.authToken);
-  if (file) {
+  const db = opts.db ?? createDb(url, opts.authToken);
+  if (file && !opts.db) {
     // WAL lets the app and a reader (a backup, the e2e checks) use the file at once; the timeout waits out a short lock.
     await db.run("PRAGMA journal_mode = WAL");
     await db.run("PRAGMA busy_timeout = 5000");
@@ -129,13 +131,13 @@ export function accountConfig(env: Record<string, string | undefined>): AccountC
 }
 
 /**
- * Where the data lives. `LEADFLOW_DB_URL` (+ `LEADFLOW_DB_TOKEN`) points at a libSQL/Turso database, the only option on
- * Vercel. Without it a local file is used: `LEADFLOW_DB_PATH`, or `data/leadflow.db`.
+ * Where the data lives. `LEADFLOW_DB_URL` is a Postgres address (Supabase) or a libSQL/Turso one (+ `LEADFLOW_DB_TOKEN`);
+ * one of them is required on Vercel. Without it a local file is used: `LEADFLOW_DB_PATH`, or `data/leadflow.db`.
  */
 export function dbConfig(env: Record<string, string | undefined>): { url: string; authToken?: string } {
   const url = env.LEADFLOW_DB_URL || `file:${env.LEADFLOW_DB_PATH || "data/leadflow.db"}`;
   if (env.VERCEL && url.startsWith("file:")) {
-    throw new Error("Vercel has no persistent disk: set LEADFLOW_DB_URL (libsql://…) and LEADFLOW_DB_TOKEN.");
+    throw new Error("Vercel has no persistent disk: set LEADFLOW_DB_URL (postgres://… or libsql://… with LEADFLOW_DB_TOKEN).");
   }
   return { url, authToken: env.LEADFLOW_DB_TOKEN || undefined };
 }
