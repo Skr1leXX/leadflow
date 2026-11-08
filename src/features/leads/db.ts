@@ -6,7 +6,7 @@ import { seedDemo } from "@/data/demo";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { migrate } from "./migrations";
 import { insertEvent, insertLead, saveSettings } from "./repo";
-import { countStaff, insertRule, insertStaff } from "./repo-workflow";
+import { countStaff, getStaff, insertRule, insertStaff } from "./repo-workflow";
 import { createDb, type Db } from "./sql";
 
 export type { Db } from "./sql";
@@ -36,10 +36,10 @@ export const DEMO_STAFF = [
 const STAFF = DEMO_STAFF;
 
 async function seedStaff(db: Db, opts: OpenOptions) {
-  if ((await countStaff(db)) > 0) return;
+  // Per account, so that switching the demo on for an existing database adds the demo managers without touching anyone else.
   for (const s of STAFF) {
     const password = s.role === "admin" ? opts.adminPassword : opts.demoPassword;
-    if (password) await insertStaff(db, { ...s, active: true, passwordHash: hashPassword(password) });
+    if (password && !(await getStaff(db, s.id))) await insertStaff(db, { ...s, active: true, passwordHash: hashPassword(password) });
   }
 }
 
