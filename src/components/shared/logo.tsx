@@ -4,8 +4,8 @@ export function LogoMark({ className = "size-8" }: { className?: string }) {
     <svg viewBox="0 0 32 32" className={className} role="img" aria-label="LeadFlow">
       <defs>
         <linearGradient id="lf-mark" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="oklch(0.55 0.2 262)" />
-          <stop offset="1" stopColor="oklch(0.5 0.24 292)" />
+          <stop offset="0" stopColor="oklch(0.68 0.15 62)" />
+          <stop offset="1" stopColor="oklch(0.52 0.14 45)" />
         </linearGradient>
       </defs>
       <rect width="32" height="32" rx="9" fill="url(#lf-mark)" />
