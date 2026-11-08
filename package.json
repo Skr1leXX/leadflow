@@ -1,0 +1,50 @@
+{
+  "name": "leadflow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "tsx --tsconfig tsconfig.json --test \"src/**/*.test.ts\"",
+    "e2e": "next build && playwright test",
+    "e2e:only": "playwright test",
+    "e2e:report": "playwright show-report",
+    "demo": "node scripts/demo.mjs",
+    "demo:reset": "node scripts/demo-reset.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run e2e",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.69.0",
+    "next": "16.4.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "recharts": "^3.10.1",
+    "shadcn": "^4.23.0",
+    "tailwind-merge": "^3.7.0",
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.5",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  },
+  "description": "LeadFlow: приём заявок с сайта, управление лидами и передача в Bitrix24",
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

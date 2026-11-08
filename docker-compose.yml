@@ -1,0 +1,17 @@
+# Single-container deployment with a persistent volume for the SQLite database. NOT TESTED (no Docker where this was written).
+# Usage: copy .env.example to .env, fill in LEADFLOW_SESSION_SECRET and LEADFLOW_ADMIN_PASSWORD, then: docker compose up -d --build
+services:
+  leadflow:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      # Inside the container the database path is fixed to the mounted volume.
+      LEADFLOW_DB_PATH: /data/leadflow.db
+    volumes:
+      - leadflow-data:/data
+    restart: unless-stopped
+
+volumes:
+  leadflow-data:
